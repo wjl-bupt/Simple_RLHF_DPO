@@ -4,7 +4,7 @@
 Converted from 1.train_gen.ipynb — training script for the generator model.
 """
 import torch
-from common import Tokenizer, ModelGEN, generate
+from common.common import Tokenizer, ModelGEN, generate
 
 
 def get_batch_data(tokenizer, device, batch_size=64):

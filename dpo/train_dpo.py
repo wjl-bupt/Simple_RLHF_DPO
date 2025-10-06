@@ -4,28 +4,28 @@
 Converted from 2.train_dpo.ipynb — DPO training script.
 """
 import torch
-from common import Tokenizer, ModelGEN, generate
+from common.common import Tokenizer, ModelGEN, generate
 from transformers import LlamaModel
-from dpo import DPO
+from dpo.dpo import DPO
 
 
 def get_batch_data(batch_size=64, tokenizer=Tokenizer()):
     def pad(data, split, lens):
-        # 做个白板 (pad)
+        # padding short sequences using 'P' token
         input_ids = torch.full((len(data), lens),
                                tokenizer.encoder['P'],
                                device=device)
 
-        # 往白板里黏贴数据
+        # attention mask
         for i, d in enumerate(data):
             input_ids[i, :len(d)] = torch.LongTensor(d)
 
         attention_mask = (input_ids != tokenizer.encoder['P']).long()
 
-        # 计算 label
+        # caclulate label
         label = input_ids.clone()
         for l, s in zip(label, split):
-            # 问题和 pad 的位置是 -100
+            # question and padding token positions are -100
             l[:s] = -100
             l[l == tokenizer.encoder['P']] = -100
 
@@ -35,15 +35,15 @@ def get_batch_data(batch_size=64, tokenizer=Tokenizer()):
             'label': label
         }
 
-    # 正确的问答
+    # preferred answer.
     choice = [tokenizer.get_data(third_number=True) for _ in range(batch_size)]
 
-    # 错误的回答简单地定义为空回答就可以了
+    # reject answer simply defined as empty answer.
     split = [i.index(tokenizer.encoder['=']) + 1 for i in choice]
     reject = [d[:s] for d, s in zip(choice, split)]
     reject = [i + [tokenizer.encoder['E']] for i in reject]
 
-    # 求最大长度
+    # get max lengths
     lens = max([len(i) for i in choice])
 
     return pad(choice, split, lens), pad(reject, split, lens)
@@ -86,26 +86,18 @@ def main():
 
     
     for i in range(20_0000):
+        # build a batch of choice and reject pairs
         choice, reject = get_batch_data()
-
-        # # calculate log prob from dpo model and reference model
-        # prob_log = get_prob_log(model_dpo, choice, reject)
-        # # Warning: reference model does not update, so no gradient needed
-        # with torch.no_grad():
-        #     prob_log_ref = get_prob_log(model_dpo_ref, choice, reject)
-
-        # # calculate kl divergence, discrete space is easy to compute
-        # kl = -0.1 * (prob_log - prob_log_ref)
-
-        # # 以 kl 散度计算 loss
-        # loss = (kl.sigmoid() + 1e-8).log().mean()
         
+        # calculate dpo loss. See dpo.py for details.
         loss = dpo_cls.compute_loss(choice, reject)
         
+        # optimize
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
+        # print training status every 100 steps
         if i % 100 == 0:
             question = tokenizer.get_data(third_number=True)
             question = question[:question.index(tokenizer.encoder['=']) + 1]
@@ -114,6 +106,7 @@ def main():
             gen = generate(model_dpo, question, device)
             print(i, tokenizer.decode(gen[0].tolist()))
 
+    # save dpo model with the name dpo.model
     model_dpo.to('cpu')
     torch.save(model_dpo.state_dict(), 'dpo.model')
 

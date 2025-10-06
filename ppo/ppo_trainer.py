@@ -14,7 +14,7 @@ import re
 
 import torch
 
-from common import Tokenizer, generate, ModelGEN
+from common.common import Tokenizer, generate, ModelGEN
 
 
 def get_prompts(batch_size=8, tokenizer=Tokenizer()):
@@ -138,14 +138,14 @@ def ppo_update(policy, old_logps, new_logps, advantages, clip_eps, optimizer):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch-size', type=int, default=8)
-    parser.add_argument('--steps', type=int, default=1000)
+    parser.add_argument('--batch-size', type=int, default=256)
+    parser.add_argument('--steps', type=int, default=10000)
     parser.add_argument('--lr', type=float, default=1e-5)
     parser.add_argument('--clip-eps', type=float, default=0.2)
     args = parser.parse_args()
 
     global device
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
 
     tokenizer = Tokenizer()
 
