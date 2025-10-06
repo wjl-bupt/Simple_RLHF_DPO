@@ -5,6 +5,8 @@ Converted from 2.train_dpo.ipynb — DPO training script.
 """
 import torch
 from common import Tokenizer, ModelGEN, generate
+from transformers import LlamaModel
+from dpo import DPO
 
 
 def get_batch_data(batch_size=64, tokenizer=Tokenizer()):
@@ -47,79 +49,64 @@ def get_batch_data(batch_size=64, tokenizer=Tokenizer()):
     return pad(choice, split, lens), pad(reject, split, lens)
 
 
-def get_prob_log(model, choice, reject):
-    b = choice['input_ids'].shape[0]
-
-    # 合并两部分输入,同时计算以提高效率
-    input_ids = torch.cat([choice['input_ids'], reject['input_ids']], dim=0)
-    attention_mask = torch.cat([
-        choice['attention_mask'], reject['attention_mask']], dim=0)
-    label = torch.cat([choice['label'], reject['label']], dim=0)
-
-    # [2b, seq, vocab]
-    out = model(input_ids=input_ids, attention_mask=attention_mask)
-
-    # 偏移以对齐
-    label = label[:, 1:]
-    out = out[:, :-1]
-
-    # 取所有字的预测概率,因为要求联合概率,所以取对数
-    out = (out.softmax(2) + 1e-8).log()
-
-    # 取预测到 label 的概率
-    index = label.clone().unsqueeze(2)
-    index[index == -100] = 0
-    prob = out.gather(2, index=index).squeeze(2)
-
-    # 只取答案部分的概率,筛选后,所有答案的概率对数求和
-    prob = (prob * (label != -100)).sum(1)
-
-    # choice 和 reject 的预测概率求差
-    return prob[:b] - prob[b:]
-
-
 def main():
     # make sure common module has tokenizer available for functions/classes defined there
     tokenizer = Tokenizer()
     tokenizer = tokenizer
-
+    
     global device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = device
+    print(device)
 
+    # (1) In PyTorch 2.6, we changed the default value of the `weights_only` argument in `torch.load` from `False` to `True`. 
+    #  Re-running `torch.load` with `weights_only` set to `False` will likely succeed, but it can result in arbitrary code execution. 
+    #  Do it only if you got the file from a trusted source.
+    # (2) Alternatively, to load with `weights_only=True` please check the recommended steps in the following error message.
+    #     WeightsUnpickler error: Unsupported global: GLOBAL common.ModelGEN was not an allowed global by default. 
+    #    Please use `torch.serialization.add_safe_globals([ModelGEN])` or 
+    #   the `torch.serialization.safe_globals([common.ModelGEN])` context manager to allowlist this global if you trust this class/function.
+
+    
     # load pretrained generator model (from gen model training)
-    model_dpo = torch.load('gen.model')
-    model_dpo.to(device)
-    model_dpo.train()
-
-    model_dpo_ref = torch.load('gen.model')
-    model_dpo_ref.to(device)
-    model_dpo_ref.train()
+    model_dpo = ModelGEN(device, tokenizer = tokenizer)
+    model_dpo.load_state_dict(torch.load('gen.model'))
+    
+    
+    model_dpo_ref = ModelGEN(device, tokenizer = tokenizer)
+    model_dpo_ref.load_state_dict(torch.load('gen.model'))
 
     optimizer = torch.optim.Adam(model_dpo.parameters(),
                                  lr=1e-4,
                                  betas=(0.9, 0.999),
                                  eps=1e-8)
 
+    beta = 1.0
+    dpo_cls = DPO(model_dpo, model_dpo_ref, beta=beta)
+
+    
     for i in range(20_0000):
         choice, reject = get_batch_data()
 
-        # calculate log prob from dpo model and reference model
-        prob_log = get_prob_log(model_dpo, choice, reject)
-        # Warning: reference model does not update, so no gradient needed
-        with torch.no_grad():
-            prob_log_ref = get_prob_log(model_dpo_ref, choice, reject)
+        # # calculate log prob from dpo model and reference model
+        # prob_log = get_prob_log(model_dpo, choice, reject)
+        # # Warning: reference model does not update, so no gradient needed
+        # with torch.no_grad():
+        #     prob_log_ref = get_prob_log(model_dpo_ref, choice, reject)
 
-        # calculate kl divergence, discrete space is easy to compute
-        kl = -0.1 * (prob_log - prob_log_ref)
+        # # calculate kl divergence, discrete space is easy to compute
+        # kl = -0.1 * (prob_log - prob_log_ref)
 
-        # 以 kl 散度计算 loss
-        loss = (kl.sigmoid() + 1e-8).log().mean()
+        # # 以 kl 散度计算 loss
+        # loss = (kl.sigmoid() + 1e-8).log().mean()
+        
+        loss = dpo_cls.compute_loss(choice, reject)
+        
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
-        if i % 2000 == 0:
+        if i % 100 == 0:
             question = tokenizer.get_data(third_number=True)
             question = question[:question.index(tokenizer.encoder['=']) + 1]
             question = torch.LongTensor(question).unsqueeze(0).to(device)
@@ -128,7 +115,8 @@ def main():
             print(i, tokenizer.decode(gen[0].tolist()))
 
     model_dpo.to('cpu')
-    torch.save(model_dpo, 'dpo.model')
+    torch.save(model_dpo.state_dict(), 'dpo.model')
+
 
 
 if __name__ == '__main__':

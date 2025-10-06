@@ -54,7 +54,7 @@ def main():
             print(i, tokenizer.decode(gen[0].tolist()), loss.item())
 
     model_gen.to('cpu')
-    torch.save(model_gen, 'gen.model')
+    torch.save(model_gen.state_dict(), 'gen.model')
 
 
 if __name__ == '__main__':
