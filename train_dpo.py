@@ -82,7 +82,7 @@ def get_batch_data(batch_size=64, tokenizer=Tokenizer()):
 
         # attention mask
         for i, d in enumerate(data):
-            input_ids[i, :len(d)] = torch.LongTensor(d)
+            input_ids[i, -len(d):] = torch.LongTensor(d)
 
         attention_mask = (input_ids != tokenizer.encoder['P']).long()
 

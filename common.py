@@ -99,20 +99,48 @@ class ModelGEN(nn.Module):
 generater = None
 
 
-def generate(model_gen, input_ids, device, tokenizer = Tokenizer()):
+def generate(model_gen, input_ids, device, tokenizer=Tokenizer()):
+    """
+    左填充版本的 generate()：
+    - 自动设置 tokenizer.padding_side = 'left'
+    - 防止生成 PAD ('P')
+    - 使用 AutoModelForCausalLM.generate()
+    """
     global generater
+
     if not generater:
-        #包装类,用于生成
+        # 包装 Llama 模型为 CausalLM
         generater = AutoModelForCausalLM.from_config(model_gen.config)
         generater.model = model_gen.feature
         generater.lm_head = model_gen.fc_out
         generater.to(device)
 
-    return generater.generate(input_ids=input_ids,
-                              min_length=-1,
-                              top_k=0.0,
-                              top_p=1.0,
-                              do_sample=True,
-                              pad_token_id=tokenizer.encoder['P'],
-                              max_new_tokens=35,
-                              eos_token_id=tokenizer.encoder['E'])
+    pad_id = tokenizer.encoder['P']
+    eos_id = tokenizer.encoder['E']
+
+    # ---- 明确左填充 ----
+    # huggingface generate() 会根据 tokenizer.padding_side 决定位置关系
+    # 如果你没有真正的 tokenizer 对象，这一行是为了让它符合左填充逻辑
+    setattr(tokenizer, "padding_side", "left")
+
+    # ---- 禁止模型生成 PAD token ----
+    bad_words_ids = [[pad_id]]
+    attention_mask = (input_ids != pad_id).long()
+
+    gen_kwargs = dict(
+        input_ids=input_ids,
+        do_sample=True,
+        top_k=0,
+        top_p=1.0,
+        attention_mask = attention_mask,
+        temperature=1.0,
+        max_new_tokens=35,
+        pad_token_id=pad_id,
+        eos_token_id=eos_id,
+        bad_words_ids=bad_words_ids,  # 防止生成 P
+    )
+
+    # ---- 实际生成 ----
+    gen = generater.generate(**gen_kwargs)
+
+    return gen

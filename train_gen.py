@@ -19,7 +19,7 @@ def get_batch_data(tokenizer, device, batch_size=64):
                            device=device)
 
     for i, d in enumerate(data):
-        input_ids[i, :len(d)] = torch.LongTensor(d)
+        input_ids[i, -len(d):] = torch.LongTensor(d)
 
     attention_mask = (input_ids != tokenizer.encoder['P']).long()
 
