@@ -14,7 +14,7 @@ import re
 
 import torch
 
-from common.common import Tokenizer, generate, ModelGEN
+from common import Tokenizer, generate, ModelGEN
 
 
 def get_prompts(batch_size=8, tokenizer=Tokenizer()):
